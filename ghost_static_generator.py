@@ -184,6 +184,7 @@ class ImprovedGhostStaticGenerator:
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         sizes = ['w600', 'w1000', 'w1600', '']  # '' represents the original size
                         
+                        sources = []
                         for format_ext, format_type in formats:
                             srcset = []
                             for size in sizes:
@@ -202,8 +203,12 @@ class ImprovedGhostStaticGenerator:
                                 for attr in ['width', 'height']:
                                     if img.get(attr):
                                         source[attr] = img[attr]
-                                picture.insert(0, source)
-                                logging.info(f"Added source for {format_type}")
+                                sources.append(source)
+                                logging.info(f"Created source for {format_type}")
+                                
+                        # Add sources in reverse order to ensure correct priority
+                        for source in reversed(sources):
+                            picture.insert(0, source)
                         
                         # Update original img srcset to use original format
                         original_srcset = []
