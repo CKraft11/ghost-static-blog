@@ -139,32 +139,26 @@ class ImprovedGhostStaticGenerator:
             logging.error(f"Error fetching URL {url}: {e}")
             return
     
-        for img in soup.find_all('img', srcset=True):
-            srcset = img['srcset']
-            for src_entry in srcset.split(','):
-                src_entry = src_entry.strip()
-                if src_entry:
-                    parts = src_entry.split()
-                    if len(parts) >= 1:
-                        size_url = parts[0]
-                        if self.is_same_domain(size_url) and 'size' in size_url:
-                            try:
-                                size_response = requests.get(size_url, timeout=30)
-                                if size_response.status_code == 200:
-                                    self.file_urls.add(size_url)
-                                    self.save_file(size_url, size_response.content, os.path.splitext(size_url)[1], is_binary=True)
-                                    logging.info(f"Scraped additional image size: {size_url}")
-                                else:
-                                    logging.warning(f"Failed to scrape image size {size_url}: HTTP {size_response.status_code}")
-                            except requests.exceptions.RequestException as e:
-                                logging.warning(f"Failed to scrape image size {size_url}: {e}")
-    
-        # Also scrape the original URL if it's an image
-        content_type = response.headers.get('content-type', '').lower()
-        if 'image' in content_type:
-            self.file_urls.add(url)
-            self.save_file(url, response.content, os.path.splitext(url)[1], is_binary=True)
-            logging.info(f"Scraped original image: {url}")
+        for img in soup.find_all('img'):
+            srcset = img.get('srcset') or img.get('data-srcset', '')
+            src = img.get('src') or img.get('data-src', '')
+            
+            all_urls = [src] if src else []
+            all_urls.extend([s.split()[0] for s in srcset.split(',') if s.strip()])
+            
+            for img_url in all_urls:
+                if self.is_same_domain(img_url):
+                    try:
+                        img_response = requests.get(img_url, timeout=30)
+                        if img_response.status_code == 200:
+                            self.file_urls.add(img_url)
+                            self.save_file(img_url, img_response.content, os.path.splitext(img_url)[1], is_binary=True)
+                            logging.info(f"Scraped image: {img_url}")
+                        else:
+                            logging.warning(f"Failed to scrape image {img_url}: HTTP {img_response.status_code}")
+                    except requests.exceptions.RequestException as e:
+                        logging.warning(f"Failed to scrape image {img_url}: {e}")
+
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
@@ -301,12 +295,19 @@ class ImprovedGhostStaticGenerator:
                         original_srcset = img.get('srcset') or img.get('data-srcset', '')
                         sizes = img.get('sizes', '')
     
-                        picture = soup.new_tag('picture')
-                        img.wrap(picture)
-                        
+                        # Create picture tag if it doesn't exist
+                        if img.parent.name != 'picture':
+                            picture = soup.new_tag('picture')
+                            img.wrap(picture)
+                        else:
+                            picture = img.parent
+    
+                        # Clear existing source tags
+                        for source in picture.find_all('source'):
+                            source.decompose()
+    
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
-                        sources_added = False
                         for format_ext, format_type in formats:
                             srcset = []
                             for src_entry in original_srcset.split(','):
@@ -327,19 +328,24 @@ class ImprovedGhostStaticGenerator:
                                     source['sizes'] = sizes
                                 picture.insert(0, source)
                                 logging.info(f"Created source for {format_type}")
-                                sources_added = True
-                        
-                        # Add a source for the original format only if new sources were added
-                        if sources_added:
+    
+                        # Preserve original image as the last source
+                        if original_srcset:
                             original_source = soup.new_tag('source')
                             original_source['srcset'] = original_srcset
                             if sizes:
                                 original_source['sizes'] = sizes
-                            picture.insert(-1, original_source)
-                        else:
-                            # If no new sources were added, remove the picture tag and keep the original img
-                            img.unwrap()
-                        
+                            picture.append(original_source)
+    
+                        # Ensure the img tag is the last child of picture
+                        picture.append(img)
+    
+                        # Preserve all original attributes of the img tag
+                        for attr, value in img.attrs.items():
+                            if attr not in ['src', 'srcset', 'sizes']:
+                                img[attr] = value
+    
+                        # Ensure lazy loading
                         img['loading'] = 'lazy'
                         
                         images_processed += 1
@@ -349,7 +355,6 @@ class ImprovedGhostStaticGenerator:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
                     logging.info(f"Updated {file_path}")
-
 
     def url_to_local_path(self, url):
         if url.startswith('/'):
