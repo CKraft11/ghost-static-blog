@@ -354,7 +354,7 @@ class ImprovedGhostStaticGenerator:
                         img.wrap(picture)
     
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
-                        
+    
                         for format_ext, format_type in formats:
                             srcset = []
                             for src_entry in original_srcset.split(','):
