@@ -311,16 +311,9 @@ class ImprovedGhostStaticGenerator:
                         original_srcset = img.get('srcset') or img.get('data-srcset', '')
                         sizes = img.get('sizes', '')
     
-                        # Create picture tag if it doesn't exist
-                        if img.parent.name != 'picture':
-                            picture = soup.new_tag('picture')
-                            img.wrap(picture)
-                        else:
-                            picture = img.parent
-    
-                        # Clear existing source tags
-                        for source in picture.find_all('source'):
-                            source.decompose()
+                        # Create picture tag
+                        picture = soup.new_tag('picture')
+                        img.insert_before(picture)
     
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
@@ -345,20 +338,12 @@ class ImprovedGhostStaticGenerator:
                                 picture.append(source)
                                 logging.info(f"Created source for {format_type}")
     
-                        # Ensure the img tag is the last child of picture
+                        # Move the original img tag into the picture tag
                         picture.append(img)
     
-                        # Update img tag's src and srcset to include original format
-                        img['src'] = src
-                        if original_srcset:
-                            img['srcset'] = original_srcset
-                        elif sizes:
-                            # If there's no original srcset but sizes exist, create a srcset from the src
-                            img['srcset'] = f"{src} 1x"
-    
-                        # Preserve all original attributes of the img tag
+                        # Ensure all original attributes of the img tag are preserved
                         for attr, value in img.attrs.items():
-                            if attr not in ['src', 'srcset', 'sizes']:
+                            if attr not in ['src', 'srcset', 'sizes', 'data-src', 'data-srcset']:
                                 img[attr] = value
     
                         # Ensure lazy loading
@@ -371,6 +356,7 @@ class ImprovedGhostStaticGenerator:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
                     logging.info(f"Updated {file_path}")
+
 
     def url_to_local_path(self, url):
         if url.startswith('/'):
