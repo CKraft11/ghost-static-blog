@@ -144,71 +144,84 @@ class ImprovedGhostStaticGenerator:
                     images_processed = 0
                     for img in soup.find_all('img'):
                         src = img.get('src')
-                        if src:
-                            local_src = self.url_to_local_path(src)
-                            if not local_src:
-                                logging.warning(f"Skipping external image: {src}")
-                                continue
+                        if not src:
+                            logging.warning(f"Image without src found in {file_path}")
+                            continue
 
-                            base_src = os.path.splitext(local_src)[0]
-                            original_ext = os.path.splitext(local_src)[1]
-                            
-                            logging.info(f"Processing image: {local_src}")
-                            
-                            parent = img.parent
-                            if parent.name != 'picture':
-                                picture = soup.new_tag('picture')
-                                img.wrap(picture)
-                                logging.info("Created new picture tag")
-                            else:
-                                picture = parent
-                                logging.info("Using existing picture tag")
-                            
-                            for source in picture.find_all('source'):
-                                source.decompose()
-                                logging.info("Removed existing source tag")
-                            
-                            formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
-                            sizes = ['w600', 'w1000', 'w1600', '']  # '' represents the original size
-                            
-                            for format_ext, format_type in formats:
-                                srcset = []
-                                for size in sizes:
-                                    size_suffix = f'/size/{size}' if size else ''
-                                    format_path = f"{base_src}{size_suffix}.{format_ext}"
-                                    if os.path.exists(format_path):
-                                        format_url = self.local_path_to_url(format_path)
-                                        width = size[1:] if size else img.get('width', 'original')
-                                        srcset.append(f"{format_url} {width}w")
-                                
-                                if srcset:
-                                    source = soup.new_tag('source', type=format_type)
-                                    source['srcset'] = ', '.join(srcset)
-                                    if img.get('sizes'):
-                                        source['sizes'] = img['sizes']
-                                    for attr in ['width', 'height']:
-                                        if img.get(attr):
-                                            source[attr] = img[attr]
-                                    picture.insert(0, source)
-                                    logging.info(f"Added source for {format_type}")
-                            
-                            # Update original img srcset to use original format
-                            original_srcset = []
+                        logging.info(f"Processing image with src: {src}")
+
+                        # Handle both absolute and relative paths
+                        if src.startswith(('http://', 'https://', '//')):
+                            local_src = self.url_to_local_path(src)
+                            if local_src is None:
+                                logging.warning(f"Skipping external or invalid image URL: {src}")
+                                continue
+                        else:
+                            local_src = os.path.normpath(os.path.join(os.path.dirname(file_path), src))
+                        
+                        if local_src is None or not os.path.exists(local_src):
+                            logging.warning(f"Image not found: {local_src}")
+                            continue
+
+                        base_src = os.path.splitext(local_src)[0]
+                        original_ext = os.path.splitext(local_src)[1]
+                        
+                        logging.info(f"Processing image: {local_src}")
+                        
+                        parent = img.parent
+                        if parent.name != 'picture':
+                            picture = soup.new_tag('picture')
+                            img.wrap(picture)
+                            logging.info("Created new picture tag")
+                        else:
+                            picture = parent
+                            logging.info("Using existing picture tag")
+                        
+                        for source in picture.find_all('source'):
+                            source.decompose()
+                            logging.info("Removed existing source tag")
+                        
+                        formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
+                        sizes = ['w600', 'w1000', 'w1600', '']  # '' represents the original size
+                        
+                        for format_ext, format_type in formats:
+                            srcset = []
                             for size in sizes:
                                 size_suffix = f'/size/{size}' if size else ''
-                                original_path = f"{base_src}{size_suffix}{original_ext}"
-                                if os.path.exists(original_path):
-                                    original_url = self.local_path_to_url(original_path)
+                                format_path = f"{base_src}{size_suffix}.{format_ext}"
+                                if os.path.exists(format_path):
+                                    format_url = self.local_path_to_url(format_path, file_path)
                                     width = size[1:] if size else img.get('width', 'original')
-                                    original_srcset.append(f"{original_url} {width}w")
+                                    srcset.append(f"{format_url} {width}w")
                             
-                            if original_srcset:
-                                img['srcset'] = ', '.join(original_srcset)
-                            
-                            # Ensure lazy loading is on the img element
-                            img['loading'] = 'lazy'
-                            
-                            images_processed += 1
+                            if srcset:
+                                source = soup.new_tag('source', type=format_type)
+                                source['srcset'] = ', '.join(srcset)
+                                if img.get('sizes'):
+                                    source['sizes'] = img['sizes']
+                                for attr in ['width', 'height']:
+                                    if img.get(attr):
+                                        source[attr] = img[attr]
+                                picture.insert(0, source)
+                                logging.info(f"Added source for {format_type}")
+                        
+                        # Update original img srcset to use original format
+                        original_srcset = []
+                        for size in sizes:
+                            size_suffix = f'/size/{size}' if size else ''
+                            original_path = f"{base_src}{size_suffix}{original_ext}"
+                            if os.path.exists(original_path):
+                                original_url = self.local_path_to_url(original_path, file_path)
+                                width = size[1:] if size else img.get('width', 'original')
+                                original_srcset.append(f"{original_url} {width}w")
+                        
+                        if original_srcset:
+                            img['srcset'] = ', '.join(original_srcset)
+                        
+                        # Ensure lazy loading is on the img element
+                        img['loading'] = 'lazy'
+                        
+                        images_processed += 1
                     
                     logging.info(f"Processed {images_processed} images in {file_path}")
                     
@@ -217,17 +230,24 @@ class ImprovedGhostStaticGenerator:
                     logging.info(f"Updated {file_path}")
 
     def url_to_local_path(self, url):
-        # Convert a URL to a local file path
-        parsed_url = urlparse(url)
+        # Implement this method to convert URLs to local paths
+        # Return None if the URL is external or invalid
+        parsed_url = urllib.parse.urlparse(url)
         if parsed_url.netloc and parsed_url.netloc not in [urlparse(self.source_url).netloc, urlparse(self.target_url).netloc]:
-            return None  # External URL
+            return None
         relative_path = parsed_url.path.lstrip('/')
         return os.path.join(self.public_dir, relative_path)
 
-    def local_path_to_url(self, local_path):
-        # Convert a local file path back to a URL
-        relative_path = os.path.relpath(local_path, self.public_dir)
-        return urllib.parse.urljoin(self.target_url, relative_path.replace('\\', '/'))
+    def local_path_to_url(self, local_path, current_file_path):
+        # Convert a local file path to a URL, handling both absolute and relative paths
+        if local_path.startswith(self.public_dir):
+            # Absolute path
+            relative_path = os.path.relpath(local_path, self.public_dir)
+            return urllib.parse.urljoin(self.target_url, relative_path.replace('\\', '/'))
+        else:
+            # Relative path
+            relative_path = os.path.relpath(local_path, os.path.dirname(current_file_path))
+            return relative_path.replace('\\', '/')
 
     def replace_urls_in_files(self):
         for root, _, files in os.walk(self.public_dir):
