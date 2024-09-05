@@ -353,7 +353,7 @@ class ImprovedGhostStaticGenerator:
                         picture = soup.new_tag('picture')
                         img.wrap(picture)
     
-                        formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
+                        formats = [('webp', 'image/webp'), ('avif', 'image/avif'), ('jxl', 'image/jxl')]
     
                         for format_ext, format_type in formats:
                             srcset = []
