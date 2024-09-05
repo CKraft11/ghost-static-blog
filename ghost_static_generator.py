@@ -161,32 +161,24 @@ class ImprovedGhostStaticGenerator:
     def convert_images(self):
         def process_image(img_path):
             try:
-                img = Image.open(img_path)
                 base_name = os.path.splitext(img_path)[0]
                 
                 # WebP conversion
-                img.save(f"{base_name}.webp", 'WEBP')
+                subprocess.run(['convert', img_path, f"{base_name}.webp"], check=True)
                 print(f"Converted to WebP: {img_path}")
                 
                 # AVIF conversion
-                try:
-                    # Use pillow-avif-plugin for AVIF support
-                    img.save(f"{base_name}.avif", 'AVIF')
-                    print(f"Converted to AVIF: {img_path}")
-                except Exception as e:
-                    print(f"Error converting to AVIF {img_path}: {str(e)}")
+                subprocess.run(['convert', img_path, f"{base_name}.avif"], check=True)
+                print(f"Converted to AVIF: {img_path}")
                 
                 # JXL conversion
-                try:
-                    subprocess.run(['cjxl', img_path, f"{base_name}.jxl"], check=True)
-                    print(f"Converted to JXL: {img_path}")
-                except subprocess.CalledProcessError as e:
-                    print(f"Error converting to JXL {img_path}: {str(e)}")
-                except FileNotFoundError:
-                    print("cjxl command not found. Make sure JPEG XL tools are installed.")
+                subprocess.run(['convert', img_path, f"{base_name}.jxl"], check=True)
+                print(f"Converted to JXL: {img_path}")
                 
+            except subprocess.CalledProcessError as e:
+                print(f"Error converting {img_path}: {str(e)}")
             except Exception as e:
-                print(f"Error processing {img_path}: {str(e)}")
+                print(f"Unexpected error processing {img_path}: {str(e)}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             futures = []
@@ -226,6 +218,8 @@ class ImprovedGhostStaticGenerator:
                         sizes = img.get('sizes', '')
 
                         parent = img.parent
+                        is_gallery_image = parent.find_parent(class_='kg-gallery-image') is not None
+                        
                         if parent.name != 'picture':
                             picture = soup.new_tag('picture')
                             img.wrap(picture)
@@ -234,9 +228,11 @@ class ImprovedGhostStaticGenerator:
                             picture = parent
                             logging.info("Using existing picture tag")
                         
-                        for source in picture.find_all('source'):
-                            source.decompose()
-                            logging.info("Removed existing source tag")
+                        # Remove existing source tags only if we're not in a gallery
+                        if not is_gallery_image:
+                            for source in picture.find_all('source'):
+                                source.decompose()
+                                logging.info("Removed existing source tag")
                         
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
