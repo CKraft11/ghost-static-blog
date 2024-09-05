@@ -154,9 +154,8 @@ class ImprovedGhostStaticGenerator:
                         if not src.startswith(('http://', 'https://', '//')):
                             src = '/' + src.lstrip('/')
 
-                        base_src = re.sub(r'/size/w\d+/', '/', src)
-                        base_src = os.path.splitext(base_src)[0]
-                        original_ext = os.path.splitext(src)[1]
+                        original_srcset = img.get('srcset') or img.get('data-srcset', '')
+                        sizes = img.get('sizes', '')
 
                         parent = img.parent
                         if parent.name != 'picture':
@@ -176,36 +175,28 @@ class ImprovedGhostStaticGenerator:
                         sources = []
                         for format_ext, format_type in formats:
                             srcset = []
-                            original_srcset = img.get('srcset') or img.get('data-srcset', '')
-                            sizes = re.findall(r'/size/w(\d+)/', original_srcset)
-                            sizes.append('')  # For original size
-                            
-                            for size in sizes:
-                                size_prefix = f'/size/w{size}' if size else ''
-                                format_path = f"{base_src}{size_prefix}.{format_ext}"
-                                local_path = self.url_to_local_path(format_path)
-                                if local_path and os.path.exists(local_path):
-                                    width = size if size else 'original'
-                                    srcset.append(f"{format_path} {width}w")
+                            for src_entry in original_srcset.split(','):
+                                src_entry = src_entry.strip()
+                                if src_entry:
+                                    parts = src_entry.split()
+                                    if len(parts) == 2:
+                                        orig_src, width = parts
+                                        new_src = re.sub(r'\.[^.]+$', f'.{format_ext}', orig_src)
+                                        local_path = self.url_to_local_path(new_src)
+                                        if local_path and os.path.exists(local_path):
+                                            srcset.append(f"{new_src} {width}")
                             
                             if srcset:
                                 source = soup.new_tag('source', type=format_type)
                                 source['srcset'] = ', '.join(srcset)
-                                if img.get('sizes'):
-                                    source['sizes'] = img['sizes']
-                                for attr in ['width', 'height']:
-                                    if img.get(attr):
-                                        source[attr] = img[attr]
+                                if sizes:
+                                    source['sizes'] = sizes
                                 sources.append(source)
                                 logging.info(f"Created source for {format_type}")
                         
                         # Add sources in reverse order to ensure correct priority
                         for source in reversed(sources):
                             picture.insert(0, source)
-                        
-                        # Update original img srcset to use original format
-                        if original_srcset:
-                            img['srcset'] = original_srcset
                         
                         # Ensure lazy loading is on the img element
                         img['loading'] = 'lazy'
