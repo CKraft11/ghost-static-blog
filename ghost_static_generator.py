@@ -255,16 +255,16 @@ class ImprovedGhostStaticGenerator:
                         if not src:
                             logging.warning(f"Image without src found in {file_path}")
                             continue
-
+    
                         logging.info(f"Processing image with src: {src}")
-
+    
                         # Handle relative paths
                         if not src.startswith(('http://', 'https://', '//')):
                             src = '/' + src.lstrip('/')
-
+    
                         original_srcset = img.get('srcset') or img.get('data-srcset', '')
                         sizes = img.get('sizes', '')
-
+    
                         parent = img.parent
                         is_gallery_image = parent.find_parent(class_='kg-gallery-image') is not None
                         
@@ -276,15 +276,13 @@ class ImprovedGhostStaticGenerator:
                             picture = parent
                             logging.info("Using existing picture tag")
                         
-                        # Remove existing source tags only if we're not in a gallery
-                        if not is_gallery_image:
-                            for source in picture.find_all('source'):
-                                source.decompose()
-                                logging.info("Removed existing source tag")
+                        # Remove existing source tags
+                        for source in picture.find_all('source'):
+                            source.decompose()
+                            logging.info("Removed existing source tag")
                         
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
-                        sources = []
                         for format_ext, format_type in formats:
                             srcset = []
                             for src_entry in original_srcset.split(','):
@@ -303,12 +301,11 @@ class ImprovedGhostStaticGenerator:
                                 source['srcset'] = ', '.join(srcset)
                                 if sizes:
                                     source['sizes'] = sizes
-                                sources.append(source)
+                                picture.insert(0, source)
                                 logging.info(f"Created source for {format_type}")
                         
-                        # Add sources in reverse order to ensure correct priority
-                        for source in reversed(sources):
-                            picture.insert(0, source)
+                        # Ensure the original img tag is the last child of the picture tag
+                        picture.append(img)
                         
                         # Ensure lazy loading is on the img element
                         img['loading'] = 'lazy'
@@ -320,6 +317,7 @@ class ImprovedGhostStaticGenerator:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
                     logging.info(f"Updated {file_path}")
+
 
     def url_to_local_path(self, url):
         if url.startswith('/'):
