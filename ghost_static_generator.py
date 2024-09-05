@@ -1,5 +1,38 @@
+#!/usr/bin/env python3
 import os
+import sys
 import subprocess
+
+# Check if running as root
+if os.geteuid() == 0:
+    print("This script should not be run as root. Please run it as a regular user.")
+    sys.exit(1)
+
+# Check if running in a virtual environment
+if sys.prefix == sys.base_prefix:
+    print("This script should be run within a virtual environment.")
+    print("Please activate your virtual environment and try again.")
+    print("If you haven't set up a virtual environment, you can do so with these commands:")
+    print("python3 -m venv /path/to/your/venv")
+    print("source /path/to/your/venv/bin/activate")
+    print("pip install pillow-avif-plugin requests beautifulsoup4 pillow gitpython")
+    sys.exit(1)
+
+# Check if required packages are installed
+required_packages = ['pillow-avif-plugin', 'requests', 'beautifulsoup4', 'pillow', 'gitpython']
+installed_packages = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze']).decode().split('\n')
+installed_packages = [package.split('==')[0].lower() for package in installed_packages]
+
+missing_packages = [package for package in required_packages if package.lower() not in installed_packages]
+
+if missing_packages:
+    print("The following required packages are missing:")
+    for package in missing_packages:
+        print(f"- {package}")
+    print("Please install them using:")
+    print(f"pip install {' '.join(missing_packages)}")
+    sys.exit(1)
+
 import urllib.request
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -80,11 +113,30 @@ class ImprovedGhostStaticGenerator:
         soup = BeautifulSoup(html_content, 'html.parser')
         
         for tag in soup.find_all(['a', 'link', 'script', 'img', 'source']):
-            attr = tag.get('href') or tag.get('src')
+            attr = tag.get('href') or tag.get('src') or tag.get('data-src')
             if attr:
                 new_url = urljoin(url, attr)
                 if self.is_same_domain(new_url):
                     self.scrape_url(new_url)
+
+        # Process inline CSS and extract image URLs
+        for style in soup.find_all('style'):
+            css_content = style.string
+            if css_content:
+                image_urls = re.findall(r'url\([\'"]?([^\'"]+)[\'"]?\)', css_content)
+                for img_url in image_urls:
+                    full_url = urljoin(url, img_url)
+                    if self.is_same_domain(full_url):
+                        self.scrape_url(full_url)
+
+        # Process inline style attributes
+        for tag in soup.find_all(style=True):
+            style_content = tag['style']
+            image_urls = re.findall(r'url\([\'"]?([^\'"]+)[\'"]?\)', style_content)
+            for img_url in image_urls:
+                full_url = urljoin(url, img_url)
+                if self.is_same_domain(full_url):
+                    self.scrape_url(full_url)
 
     def is_same_domain(self, url):
         return urlparse(url).netloc == urlparse(self.source_url).netloc
@@ -111,22 +163,38 @@ class ImprovedGhostStaticGenerator:
             try:
                 img = Image.open(img_path)
                 base_name = os.path.splitext(img_path)[0]
+                
+                # WebP conversion
                 img.save(f"{base_name}.webp", 'WEBP')
+                print(f"Converted to WebP: {img_path}")
+                
+                # AVIF conversion
                 try:
+                    # Use pillow-avif-plugin for AVIF support
                     img.save(f"{base_name}.avif", 'AVIF')
                     print(f"Converted to AVIF: {img_path}")
                 except Exception as e:
                     print(f"Error converting to AVIF {img_path}: {str(e)}")
-                print(f"Converted to WebP: {img_path}")
+                
+                # JXL conversion
+                try:
+                    subprocess.run(['cjxl', img_path, f"{base_name}.jxl"], check=True)
+                    print(f"Converted to JXL: {img_path}")
+                except subprocess.CalledProcessError as e:
+                    print(f"Error converting to JXL {img_path}: {str(e)}")
+                except FileNotFoundError:
+                    print("cjxl command not found. Make sure JPEG XL tools are installed.")
+                
             except Exception as e:
                 print(f"Error processing {img_path}: {str(e)}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             futures = []
-            for file_url in self.file_urls:
-                file_path = os.path.join(self.public_dir, urlparse(file_url).path.lstrip('/'))
-                if os.path.exists(file_path) and imghdr.what(file_path) is not None:
-                    futures.append(executor.submit(process_image, file_path))
+            for root, _, files in os.walk(self.public_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if imghdr.what(file_path) is not None:
+                        futures.append(executor.submit(process_image, file_path))
             
             for future in concurrent.futures.as_completed(futures):
                 future.result()
