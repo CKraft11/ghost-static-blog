@@ -21,11 +21,11 @@ class ImprovedGhostStaticGenerator:
         self.image_dir = os.path.join(self.public_dir, 'content', 'images')
         self.renders_dir = os.path.join(self.public_dir, 'content', 'renders')
         self.visited_urls = set()
+        self.image_urls = set()
 
     def run(self):
         self.update_repo()
         self.scrape_site()
-        self.copy_images()
         self.convert_images()
         self.update_html_for_image_formats()
         self.commit_and_push()
@@ -71,6 +71,7 @@ class ImprovedGhostStaticGenerator:
             elif 'javascript' in content_type:
                 self.save_file(url, response.text, '.js')
             elif 'image' in content_type:
+                self.image_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
             else:
                 print(f"Skipping unsupported content type for {url}: {content_type}")
@@ -94,7 +95,9 @@ class ImprovedGhostStaticGenerator:
             elif tag.name in ['link', 'script'] and tag.get('src'):
                 self.scrape_url(urljoin(url, tag['src']))
             elif tag.name == 'img' and tag.get('src'):
-                self.scrape_url(urljoin(url, tag['src']))
+                img_url = urljoin(url, tag['src'])
+                self.image_urls.add(img_url)
+                self.scrape_url(img_url)
 
     def is_same_domain(self, url):
         return urlparse(url).netloc == urlparse(self.source_url).netloc
@@ -116,29 +119,29 @@ class ImprovedGhostStaticGenerator:
         
         print(f"Saved: {file_path}")
 
-    def copy_images(self):
-        shutil.rmtree(self.image_dir, ignore_errors=True)
-        shutil.rmtree(self.renders_dir, ignore_errors=True)
-        shutil.copytree('/helium/ghost/ghost-backup/content/images', self.image_dir)
-        shutil.copytree('/helium/ghost/ghost-backup/content/renders', self.renders_dir)
-
     def convert_images(self):
         def process_image(img_path):
             try:
                 img = Image.open(img_path)
                 base_name = os.path.splitext(img_path)[0]
                 img.save(f"{base_name}.webp", 'WEBP')
-                img.save(f"{base_name}.avif", 'AVIF')
+                try:
+                    img.save(f"{base_name}.avif", 'AVIF')
+                except Exception as e:
+                    print(f"Error converting to AVIF {img_path}: {str(e)}")
                 print(f"Converted: {img_path}")
             except Exception as e:
-                print(f"Error converting {img_path}: {str(e)}")
+                print(f"Error processing {img_path}: {str(e)}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            for root, _, files in os.walk(self.public_dir):
-                for file in files:
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                        img_path = os.path.join(root, file)
-                        executor.submit(process_image, img_path)
+            futures = []
+            for img_url in self.image_urls:
+                img_path = os.path.join(self.public_dir, urlparse(img_url).path.lstrip('/'))
+                if os.path.exists(img_path):
+                    futures.append(executor.submit(process_image, img_path))
+            
+            for future in concurrent.futures.as_completed(futures):
+                future.result()  # This will raise any exceptions that occurred during execution
 
     def update_html_for_image_formats(self):
         for root, _, files in os.walk(self.public_dir):
@@ -153,8 +156,18 @@ class ImprovedGhostStaticGenerator:
                         src = img.get('src')
                         if src:
                             base_src = os.path.splitext(src)[0]
-                            img['srcset'] = f"{base_src}.webp, {base_src}.avif"
-                            img['onerror'] = f"this.onerror=null; this.src='{src}';"
+                            webp_path = f"{base_src}.webp"
+                            avif_path = f"{base_src}.avif"
+                            
+                            srcset = []
+                            if os.path.exists(os.path.join(self.public_dir, webp_path.lstrip('/'))):
+                                srcset.append(f"{webp_path} 1x")
+                            if os.path.exists(os.path.join(self.public_dir, avif_path.lstrip('/'))):
+                                srcset.append(f"{avif_path} 1x")
+                            
+                            if srcset:
+                                img['srcset'] = ", ".join(srcset)
+                                img['onerror'] = f"this.onerror=null; this.src='{src}';"
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
