@@ -2,6 +2,7 @@
 import os
 import sys
 import subprocess
+import argparse
 
 # Check if running as root
 if os.geteuid() == 0:
@@ -13,8 +14,8 @@ if sys.prefix == sys.base_prefix:
     print("This script should be run within a virtual environment.")
     print("Please activate your virtual environment and try again.")
     print("If you haven't set up a virtual environment, you can do so with these commands:")
-    print("python3 -m venv /path/to/your/venv")
-    print("source /path/to/your/venv/bin/activate")
+    print("python3 -m venv ghost-static-env")
+    print("source ghost-static-env/bin/activate")
     print("pip install pillow-avif-plugin requests beautifulsoup4 pillow gitpython")
     sys.exit(1)
 
@@ -51,13 +52,14 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ImprovedGhostStaticGenerator:
-    def __init__(self, source_url, target_url, repo_path):
+    def __init__(self, source_url, target_url, repo_path, force_reconvert=False):
         self.source_url = source_url
         self.target_url = target_url
         self.repo_path = repo_path
         self.public_dir = os.path.join(repo_path, 'public')
         self.visited_urls = set()
         self.file_urls = set()
+        self.force_reconvert = force_reconvert
 
     def update_repo(self):
         try:
@@ -82,16 +84,31 @@ class ImprovedGhostStaticGenerator:
 
     def scrape_site(self):
         self.scrape_url(self.source_url)
+        self.scrape_root_files()
+    
+    def scrape_root_files(self):
+        root_files = [
+            'favicon.ico',
+            'robots.txt',
+            'sitemap.xml',
+            'sitemap-authors.xml',
+            'sitemap-pages.xml',
+            'sitemap-posts.xml',
+            'sitemap-tags.xml'
+        ]
+        for file in root_files:
+            url = urljoin(self.source_url, file)
+            self.scrape_url(url)
 
     def scrape_url(self, url):
         if url in self.visited_urls:
             return
         self.visited_urls.add(url)
-
+    
         try:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
-
+    
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type:
                 self.process_html(url, response.text)
@@ -99,13 +116,14 @@ class ImprovedGhostStaticGenerator:
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
             else:
-                print(f"Skipping unsupported content type for {url}: {content_type}")
-
+                logging.info(f"Saving file with content-type {content_type}: {url}")
+                self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
+    
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching {url}: {e}")
+            logging.error(f"Error fetching {url}: {e}")
         except Exception as e:
-            print(f"Unexpected error scraping {url}: {str(e)}")
-
+            logging.error(f"Unexpected error scraping {url}: {str(e)}")
+    
         time.sleep(0.1)
 
     def process_html(self, url, html_content):
@@ -153,41 +171,71 @@ class ImprovedGhostStaticGenerator:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         
         mode = 'wb' if is_binary else 'w'
-        with open(file_path, mode) as f:
+        encoding = None if is_binary else 'utf-8'
+        with open(file_path, mode, encoding=encoding) as f:
             f.write(content)
         
-        print(f"Saved: {file_path}")
+        logging.info(f"Saved: {file_path}")
 
     def convert_images(self):
-        def process_image(img_path):
+        def convert_to_webp(img_path):
+            output_path = f"{os.path.splitext(img_path)[0]}.webp"
+            if os.path.exists(output_path) and not self.force_reconvert:
+                logging.info(f"WebP already exists, skipping: {img_path}")
+                return True
             try:
-                base_name = os.path.splitext(img_path)[0]
-                
-                # WebP conversion
-                subprocess.run(['convert', img_path, f"{base_name}.webp"], check=True)
-                print(f"Converted to WebP: {img_path}")
-                
-                # AVIF conversion
-                subprocess.run(['convert', img_path, f"{base_name}.avif"], check=True)
-                print(f"Converted to AVIF: {img_path}")
-                
-                # JXL conversion
-                subprocess.run(['convert', img_path, f"{base_name}.jxl"], check=True)
-                print(f"Converted to JXL: {img_path}")
-                
+                subprocess.run(['cwebp', '-q', '80', img_path, '-o', output_path], check=True)
+                logging.info(f"Converted to WebP: {img_path}")
+                return True
             except subprocess.CalledProcessError as e:
-                print(f"Error converting {img_path}: {str(e)}")
-            except Exception as e:
-                print(f"Unexpected error processing {img_path}: {str(e)}")
+                logging.error(f"Error converting {img_path} to WebP: {str(e)}")
+                return False
+
+        def convert_to_avif(img_path):
+            output_path = f"{os.path.splitext(img_path)[0]}.avif"
+            if os.path.exists(output_path) and not self.force_reconvert:
+                logging.info(f"AVIF already exists, skipping: {img_path}")
+                return True
+            try:
+                # Use 4 threads for AVIF conversion
+                subprocess.run(['avifenc', '-s', '0', '-j', '4', '-d', '8', img_path, output_path], check=True)
+                logging.info(f"Converted to AVIF: {img_path}")
+                return True
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error converting {img_path} to AVIF: {str(e)}")
+                return False
+
+        def convert_to_jxl(img_path):
+            output_path = f"{os.path.splitext(img_path)[0]}.jxl"
+            if os.path.exists(output_path) and not self.force_reconvert:
+                logging.info(f"JXL already exists, skipping: {img_path}")
+                return True
+            try:
+                subprocess.run(['cjxl', img_path, output_path], check=True)
+                logging.info(f"Converted to JXL: {img_path}")
+                return True
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Error converting {img_path} to JXL: {str(e)}")
+                return False
+            except FileNotFoundError:
+                logging.error("cjxl command not found. Please ensure JPEG XL tools are installed.")
+                return False
+
+        def process_image(img_path):
+            webp_success = convert_to_webp(img_path)
+            avif_success = convert_to_avif(img_path)
+            jxl_success = convert_to_jxl(img_path)
+            return webp_success, avif_success, jxl_success
+
+        image_paths = []
+        for root, _, files in os.walk(self.public_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')) and (self.force_reconvert or not all(os.path.exists(f"{os.path.splitext(file_path)[0]}.{ext}") for ext in ['webp', 'avif', 'jxl'])):
+                    image_paths.append(file_path)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            futures = []
-            for root, _, files in os.walk(self.public_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if imghdr.what(file_path) is not None:
-                        futures.append(executor.submit(process_image, file_path))
-            
+            futures = [executor.submit(process_image, img_path) for img_path in image_paths]
             for future in concurrent.futures.as_completed(futures):
                 future.result()
 
@@ -329,9 +377,13 @@ class ImprovedGhostStaticGenerator:
         logging.info("Static site generation process completed")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate static site from Ghost blog")
+    parser.add_argument("--force-reconvert", action="store_true", help="Force reconversion of all images")
+    args = parser.parse_args()
+
     source_url = "http://10.0.0.222:2368"  # Change this to your local Ghost URL
     target_url = "https://dev.cadenkraft.com"  # Change this to your target URL
     repo_path = "/home/ghost-static-site-gen"  # Change this to your local repo path
 
-    generator = ImprovedGhostStaticGenerator(source_url, target_url, repo_path)
+    generator = ImprovedGhostStaticGenerator(source_url, target_url, repo_path, force_reconvert=args.force_reconvert)
     generator.run()

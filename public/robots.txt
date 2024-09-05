@@ -1,0 +1,7 @@
+User-agent: *
+Sitemap: http://10.0.0.222:2368/sitemap.xml
+Disallow: /ghost/
+Disallow: /p/
+Disallow: /email/
+Disallow: /r/
+Disallow: /webmentions/receive/
