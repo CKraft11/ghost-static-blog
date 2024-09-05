@@ -13,6 +13,9 @@ from urllib.parse import urljoin, urlparse
 import time
 import mimetypes
 import imghdr
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ImprovedGhostStaticGenerator:
     def __init__(self, source_url, target_url, repo_path):
@@ -22,14 +25,6 @@ class ImprovedGhostStaticGenerator:
         self.public_dir = os.path.join(repo_path, 'public')
         self.visited_urls = set()
         self.file_urls = set()
-
-    def run(self):
-        self.update_repo()
-        self.scrape_site()
-        self.convert_images()
-        self.update_html_for_image_formats()
-        self.replace_urls_in_files()
-        self.commit_and_push()
 
     def update_repo(self):
         try:
@@ -141,10 +136,12 @@ class ImprovedGhostStaticGenerator:
             for file in files:
                 if file.endswith('.html'):
                     file_path = os.path.join(root, file)
+                    logging.info(f"Processing HTML file: {file_path}")
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                     
                     soup = BeautifulSoup(content, 'html.parser')
+                    images_processed = 0
                     for img in soup.find_all('img'):
                         src = img.get('src')
                         if src:
@@ -153,45 +150,47 @@ class ImprovedGhostStaticGenerator:
                             avif_path = f"{base_src}.avif"
                             webp_path = f"{base_src}.webp"
                             
-                            # Check if the image is already wrapped in a picture tag
+                            logging.info(f"Processing image: {src}")
+                            
                             parent = img.parent
                             if parent.name != 'picture':
                                 picture = soup.new_tag('picture')
                                 img.wrap(picture)
+                                logging.info("Created new picture tag")
                             else:
                                 picture = parent
+                                logging.info("Using existing picture tag")
                             
-                            # Remove any existing source tags
                             for source in picture.find_all('source'):
                                 source.decompose()
+                                logging.info("Removed existing source tag")
                             
-                            # Add source tags for JXL, AVIF, and WebP
-                            if os.path.exists(os.path.join(self.public_dir, jxl_path.lstrip('/'))):
-                                jxl_source = soup.new_tag('source', type="image/jxl")
-                                jxl_source['srcset'] = jxl_path
-                                picture.insert(0, jxl_source)
+                            sources_added = 0
+                            for format_path, format_type in [(jxl_path, "image/jxl"), (avif_path, "image/avif"), (webp_path, "image/webp")]:
+                                full_path = os.path.join(self.public_dir, format_path.lstrip('/'))
+                                if os.path.exists(full_path):
+                                    source = soup.new_tag('source', type=format_type)
+                                    source['srcset'] = format_path
+                                    picture.insert(sources_added, source)
+                                    sources_added += 1
+                                    logging.info(f"Added source for {format_type}")
+                                else:
+                                    logging.warning(f"File not found: {full_path}")
                             
-                            if os.path.exists(os.path.join(self.public_dir, avif_path.lstrip('/'))):
-                                avif_source = soup.new_tag('source', type="image/avif")
-                                avif_source['srcset'] = avif_path
-                                picture.insert(1, avif_source)
-                            
-                            if os.path.exists(os.path.join(self.public_dir, webp_path.lstrip('/'))):
-                                webp_source = soup.new_tag('source', type="image/webp")
-                                webp_source['srcset'] = webp_path
-                                picture.insert(2, webp_source)
-                            
-                            # Preserve original srcset, sizes, and other attributes
                             for attr in ['srcset', 'sizes', 'width', 'height']:
                                 if img.get(attr):
                                     for source in picture.find_all('source'):
                                         source[attr] = img[attr]
+                                    logging.info(f"Preserved attribute: {attr}")
                             
-                            # Ensure the img tag is the last child of the picture tag
                             picture.append(img.extract())
+                            images_processed += 1
+                    
+                    logging.info(f"Processed {images_processed} images in {file_path}")
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
+                    logging.info(f"Updated {file_path}")
 
     def replace_urls_in_files(self):
         for root, _, files in os.walk(self.public_dir):
@@ -217,6 +216,16 @@ class ImprovedGhostStaticGenerator:
             print(f"Git operation failed: {e}")
         except Exception as e:
             print(f"An error occurred while committing and pushing: {e}")
+            
+    def run(self):
+        logging.info("Starting the static site generation process")
+        self.update_repo()
+        self.scrape_site()
+        self.convert_images()
+        self.update_html_for_image_formats()
+        self.replace_urls_in_files()
+        self.commit_and_push()
+        logging.info("Static site generation process completed")
 
 if __name__ == "__main__":
     source_url = "http://10.0.0.222:2368"  # Change this to your local Ghost URL
