@@ -202,6 +202,51 @@ class ImprovedGhostStaticGenerator:
                     except requests.exceptions.RequestException as e:
                         logging.warning(f"Failed to scrape background image {img_url}: {e}")
 
+    def scrape_iframe_content(self, iframe_src):
+        if not self.is_same_domain(iframe_src):
+            return
+    
+        try:
+            response = requests.get(iframe_src, timeout=30)
+            response.raise_for_status()
+            iframe_content = response.text
+    
+            # Save the iframe HTML file
+            self.save_file(iframe_src, iframe_content, '.html')
+    
+            # Parse the iframe content
+            iframe_soup = BeautifulSoup(iframe_content, 'html.parser')
+    
+            # Find and scrape all script files
+            for script in iframe_soup.find_all('script', src=True):
+                script_src = urljoin(iframe_src, script['src'])
+                if self.is_same_domain(script_src):
+                    self.scrape_url(script_src)
+    
+            # Find and scrape all CSS files
+            for link in iframe_soup.find_all('link', rel='stylesheet'):
+                css_src = urljoin(iframe_src, link['href'])
+                if self.is_same_domain(css_src):
+                    self.scrape_url(css_src)
+    
+            # Find and scrape all images
+            for img in iframe_soup.find_all('img', src=True):
+                img_src = urljoin(iframe_src, img['src'])
+                if self.is_same_domain(img_src):
+                    self.scrape_url(img_src)
+    
+            # Look for any other resources that might be loaded dynamically
+            # This is a simple regex search and might need to be adjusted based on your specific JS code
+            resource_pattern = re.compile(r'(["\'`])((?:\.{1,2}\/)*(?:[\w-]+\/)*[\w-]+\.(?:jpg|jpeg|png|gif|svg|js|css))\1')
+            for match in resource_pattern.finditer(iframe_content):
+                resource_path = match.group(2)
+                resource_url = urljoin(iframe_src, resource_path)
+                if self.is_same_domain(resource_url):
+                    self.scrape_url(resource_url)
+    
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching iframe content from {iframe_src}: {e}")
+
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -212,7 +257,17 @@ class ImprovedGhostStaticGenerator:
                 new_url = urljoin(url, attr)
                 if self.is_same_domain(new_url):
                     self.scrape_url(new_url)
-
+    
+        # Process iframes
+        for iframe in soup.find_all('iframe'):
+            iframe_src = iframe.get('src')
+            if iframe_src:
+                iframe_url = urljoin(url, iframe_src)
+                if self.is_same_domain(iframe_url):
+                    self.scrape_iframe_content(iframe_url)
+                    # Update iframe src to use the target URL
+                    iframe['src'] = self.update_url(iframe_url)
+    
         # Process inline CSS and extract image URLs
         for style in soup.find_all('style'):
             css_content = style.string
@@ -222,7 +277,7 @@ class ImprovedGhostStaticGenerator:
                     full_url = urljoin(url, img_url)
                     if self.is_same_domain(full_url):
                         self.scrape_url(full_url)
-
+    
         # Process inline style attributes
         for tag in soup.find_all(style=True):
             style_content = tag['style']
@@ -231,6 +286,10 @@ class ImprovedGhostStaticGenerator:
                 full_url = urljoin(url, img_url)
                 if self.is_same_domain(full_url):
                     self.scrape_url(full_url)
+    
+        # Update the HTML content with the modified iframe src
+        updated_html = str(soup)
+        self.save_file(url, updated_html, '.html')
 
     def is_same_domain(self, url):
         return urlparse(url).netloc == urlparse(self.source_url).netloc
