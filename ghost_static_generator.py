@@ -28,6 +28,7 @@ class ImprovedGhostStaticGenerator:
         self.scrape_site()
         self.convert_images()
         self.update_html_for_image_formats()
+        self.replace_urls_in_files()
         self.commit_and_push()
 
     def update_repo(self):
@@ -125,11 +126,7 @@ class ImprovedGhostStaticGenerator:
                 img = Image.open(img_path)
                 base_name = os.path.splitext(img_path)[0]
                 img.save(f"{base_name}.webp", 'WEBP')
-                try:
-                    img.save(f"{base_name}.avif", 'AVIF')
-                except Exception as e:
-                    print(f"Error converting to AVIF {img_path}: {str(e)}")
-                print(f"Converted: {img_path}")
+                print(f"Converted to WebP: {img_path}")
             except Exception as e:
                 print(f"Error processing {img_path}: {str(e)}")
 
@@ -141,7 +138,7 @@ class ImprovedGhostStaticGenerator:
                     futures.append(executor.submit(process_image, img_path))
             
             for future in concurrent.futures.as_completed(futures):
-                future.result()  # This will raise any exceptions that occurred during execution
+                future.result()
 
     def update_html_for_image_formats(self):
         for root, _, files in os.walk(self.public_dir):
@@ -157,20 +154,27 @@ class ImprovedGhostStaticGenerator:
                         if src:
                             base_src = os.path.splitext(src)[0]
                             webp_path = f"{base_src}.webp"
-                            avif_path = f"{base_src}.avif"
                             
-                            srcset = []
                             if os.path.exists(os.path.join(self.public_dir, webp_path.lstrip('/'))):
-                                srcset.append(f"{webp_path} 1x")
-                            if os.path.exists(os.path.join(self.public_dir, avif_path.lstrip('/'))):
-                                srcset.append(f"{avif_path} 1x")
-                            
-                            if srcset:
-                                img['srcset'] = ", ".join(srcset)
+                                img['srcset'] = f"{webp_path} 1x"
                                 img['onerror'] = f"this.onerror=null; this.src='{src}';"
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
+
+    def replace_urls_in_files(self):
+        for root, _, files in os.walk(self.public_dir):
+            for file in files:
+                if file.endswith(('.html', '.css', '.js')):
+                    file_path = os.path.join(root, file)
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Replace the source URL with the target URL
+                    content = content.replace(self.source_url, self.target_url)
+                    
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
 
     def commit_and_push(self):
         try:
