@@ -145,16 +145,13 @@ class ImprovedGhostStaticGenerator:
                     for img in soup.find_all('img'):
                         src = img.get('src')
                         if src:
-                            # Convert the src URL to a local file path
                             local_src = self.url_to_local_path(src)
                             if not local_src:
                                 logging.warning(f"Skipping external image: {src}")
                                 continue
 
                             base_src = os.path.splitext(local_src)[0]
-                            jxl_path = f"{base_src}.jxl"
-                            avif_path = f"{base_src}.avif"
-                            webp_path = f"{base_src}.webp"
+                            original_ext = os.path.splitext(local_src)[1]
                             
                             logging.info(f"Processing image: {local_src}")
                             
@@ -171,24 +168,46 @@ class ImprovedGhostStaticGenerator:
                                 source.decompose()
                                 logging.info("Removed existing source tag")
                             
-                            sources_added = 0
-                            for format_path, format_type in [(jxl_path, "image/jxl"), (avif_path, "image/avif"), (webp_path, "image/webp")]:
-                                if os.path.exists(format_path):
-                                    source = soup.new_tag('source', type=format_type)
-                                    source['srcset'] = self.local_path_to_url(format_path)
-                                    picture.insert(sources_added, source)
-                                    sources_added += 1
-                                    logging.info(f"Added source for {format_type}")
-                                else:
-                                    logging.warning(f"File not found: {format_path}")
+                            formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
+                            sizes = ['w600', 'w1000', 'w1600', '']  # '' represents the original size
                             
-                            for attr in ['srcset', 'sizes', 'width', 'height']:
+                            for format_ext, format_type in formats:
+                                srcset = []
+                                for size in sizes:
+                                    size_suffix = f'/size/{size}' if size else ''
+                                    format_path = f"{base_src}{size_suffix}.{format_ext}"
+                                    if os.path.exists(format_path):
+                                        format_url = self.local_path_to_url(format_path)
+                                        width = size[1:] if size else 'original'
+                                        srcset.append(f"{format_url} {width}w")
+                                
+                                if srcset:
+                                    source = soup.new_tag('source', type=format_type)
+                                    source['srcset'] = ', '.join(srcset)
+                                    if img.get('sizes'):
+                                        source['sizes'] = img['sizes']
+                                    picture.insert(0, source)
+                                    logging.info(f"Added source for {format_type}")
+                            
+                            # Update original img srcset to use original format
+                            original_srcset = []
+                            for size in sizes:
+                                size_suffix = f'/size/{size}' if size else ''
+                                original_path = f"{base_src}{size_suffix}{original_ext}"
+                                if os.path.exists(original_path):
+                                    original_url = self.local_path_to_url(original_path)
+                                    width = size[1:] if size else 'original'
+                                    original_srcset.append(f"{original_url} {width}w")
+                            
+                            if original_srcset:
+                                img['srcset'] = ', '.join(original_srcset)
+                            
+                            for attr in ['sizes', 'width', 'height', 'loading', 'decoding', 'class']:
                                 if img.get(attr):
                                     for source in picture.find_all('source'):
                                         source[attr] = img[attr]
                                     logging.info(f"Preserved attribute: {attr}")
                             
-                            picture.append(img.extract())
                             images_processed += 1
                     
                     logging.info(f"Processed {images_processed} images in {file_path}")
