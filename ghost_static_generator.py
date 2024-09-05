@@ -143,31 +143,21 @@ class ImprovedGhostStaticGenerator:
                     soup = BeautifulSoup(content, 'html.parser')
                     images_processed = 0
                     for img in soup.find_all('img'):
-                        src = img.get('src')
+                        src = img.get('src') or img.get('data-src')
                         if not src:
                             logging.warning(f"Image without src found in {file_path}")
                             continue
 
                         logging.info(f"Processing image with src: {src}")
 
-                        # Handle both absolute and relative paths
-                        if src.startswith(('http://', 'https://', '//')):
-                            local_src = self.url_to_local_path(src)
-                            if local_src is None:
-                                logging.warning(f"Skipping external or invalid image URL: {src}")
-                                continue
-                        else:
-                            local_src = os.path.normpath(os.path.join(os.path.dirname(file_path), src))
-                        
-                        if local_src is None or not os.path.exists(local_src):
-                            logging.warning(f"Image not found: {local_src}")
-                            continue
+                        # Handle relative paths
+                        if not src.startswith(('http://', 'https://', '//')):
+                            src = '/' + src.lstrip('/')
 
-                        base_src = os.path.splitext(local_src)[0]
-                        original_ext = os.path.splitext(local_src)[1]
-                        
-                        logging.info(f"Processing image: {local_src}")
-                        
+                        base_src = re.sub(r'/size/w\d+/', '/', src)
+                        base_src = os.path.splitext(base_src)[0]
+                        original_ext = os.path.splitext(src)[1]
+
                         parent = img.parent
                         if parent.name != 'picture':
                             picture = soup.new_tag('picture')
@@ -182,18 +172,21 @@ class ImprovedGhostStaticGenerator:
                             logging.info("Removed existing source tag")
                         
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
-                        sizes = ['w600', 'w1000', 'w1600', '']  # '' represents the original size
                         
                         sources = []
                         for format_ext, format_type in formats:
                             srcset = []
+                            original_srcset = img.get('srcset') or img.get('data-srcset', '')
+                            sizes = re.findall(r'/size/w(\d+)/', original_srcset)
+                            sizes.append('')  # For original size
+                            
                             for size in sizes:
-                                size_suffix = f'/size/{size}' if size else ''
-                                format_path = f"{base_src}{size_suffix}.{format_ext}"
-                                if os.path.exists(format_path):
-                                    format_url = self.local_path_to_url(format_path, file_path)
-                                    width = size[1:] if size else img.get('width', 'original')
-                                    srcset.append(f"{format_url} {width}w")
+                                size_prefix = f'/size/w{size}' if size else ''
+                                format_path = f"{base_src}{size_prefix}.{format_ext}"
+                                local_path = self.url_to_local_path(format_path)
+                                if local_path and os.path.exists(local_path):
+                                    width = size if size else 'original'
+                                    srcset.append(f"{format_path} {width}w")
                             
                             if srcset:
                                 source = soup.new_tag('source', type=format_type)
@@ -205,23 +198,14 @@ class ImprovedGhostStaticGenerator:
                                         source[attr] = img[attr]
                                 sources.append(source)
                                 logging.info(f"Created source for {format_type}")
-                                
+                        
                         # Add sources in reverse order to ensure correct priority
                         for source in reversed(sources):
                             picture.insert(0, source)
                         
                         # Update original img srcset to use original format
-                        original_srcset = []
-                        for size in sizes:
-                            size_suffix = f'/size/{size}' if size else ''
-                            original_path = f"{base_src}{size_suffix}{original_ext}"
-                            if os.path.exists(original_path):
-                                original_url = self.local_path_to_url(original_path, file_path)
-                                width = size[1:] if size else img.get('width', 'original')
-                                original_srcset.append(f"{original_url} {width}w")
-                        
                         if original_srcset:
-                            img['srcset'] = ', '.join(original_srcset)
+                            img['srcset'] = original_srcset
                         
                         # Ensure lazy loading is on the img element
                         img['loading'] = 'lazy'
@@ -235,10 +219,10 @@ class ImprovedGhostStaticGenerator:
                     logging.info(f"Updated {file_path}")
 
     def url_to_local_path(self, url):
-        # Implement this method to convert URLs to local paths
-        # Return None if the URL is external or invalid
+        if url.startswith('/'):
+            return os.path.join(self.public_dir, url.lstrip('/'))
         parsed_url = urllib.parse.urlparse(url)
-        if parsed_url.netloc and parsed_url.netloc not in [urlparse(self.source_url).netloc, urlparse(self.target_url).netloc]:
+        if parsed_url.netloc and parsed_url.netloc not in [urllib.parse.urlparse(self.source_url).netloc, urllib.parse.urlparse(self.target_url).netloc]:
             return None
         relative_path = parsed_url.path.lstrip('/')
         return os.path.join(self.public_dir, relative_path)
