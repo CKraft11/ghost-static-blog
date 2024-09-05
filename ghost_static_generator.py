@@ -142,8 +142,15 @@ class ImprovedGhostStaticGenerator:
             return
         
         # Construct the base URL for the image (without size specification)
-        base_path = '/'.join(path_parts[:content_index+1] + path_parts[content_index+3:])
+        if 'size' in path_parts:
+            size_index = path_parts.index('size')
+            base_path = '/'.join(path_parts[:size_index] + path_parts[size_index+2:])
+        else:
+            base_path = '/'.join(path_parts)
         base_url = parsed_url._replace(path=base_path).geturl()
+        
+        # Extract the year and month from the URL
+        year_month = '/'.join(path_parts[-3:-1])  # This should give us '2024/02' from your example
         
         # Fetch the HTML page that contains the image
         try:
@@ -168,14 +175,22 @@ class ImprovedGhostStaticGenerator:
                         size_url, _ = parts
                         # Only process URLs that are from the same domain and contain 'size'
                         if self.is_same_domain(size_url) and 'size' in size_url:
+                            # Construct the full URL with the correct structure
+                            size_path_parts = urlparse(size_url).path.split('/')
+                            size = size_path_parts[size_path_parts.index('size') + 1]
+                            filename = path_parts[-1]
+                            full_size_url = f"{self.source_url}/content/images/size/{size}/{year_month}/{filename}"
+                            
                             try:
-                                response = requests.get(size_url, timeout=30)
+                                response = requests.get(full_size_url, timeout=30)
                                 if response.status_code == 200:
-                                    self.file_urls.add(size_url)
-                                    self.save_file(size_url, response.content, os.path.splitext(size_url)[1], is_binary=True)
-                                    logging.info(f"Scraped additional image size: {size_url}")
+                                    self.file_urls.add(full_size_url)
+                                    self.save_file(full_size_url, response.content, os.path.splitext(full_size_url)[1], is_binary=True)
+                                    logging.info(f"Scraped additional image size: {full_size_url}")
+                                else:
+                                    logging.warning(f"Failed to scrape image size {full_size_url}: HTTP {response.status_code}")
                             except requests.exceptions.RequestException as e:
-                                logging.warning(f"Failed to scrape image size {size_url}: {e}")
+                                logging.warning(f"Failed to scrape image size {full_size_url}: {e}")
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
