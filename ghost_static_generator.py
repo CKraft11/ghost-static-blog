@@ -348,6 +348,14 @@ class ImprovedGhostStaticGenerator:
                         # Ensure the img tag is the last child of picture
                         picture.append(img)
     
+                        # Update img tag's src and srcset to include original format
+                        img['src'] = src
+                        if original_srcset:
+                            img['srcset'] = original_srcset
+                        elif sizes:
+                            # If there's no original srcset but sizes exist, create a srcset from the src
+                            img['srcset'] = f"{src} 1x"
+    
                         # Preserve all original attributes of the img tag
                         for attr, value in img.attrs.items():
                             if attr not in ['src', 'srcset', 'sizes']:
