@@ -139,7 +139,7 @@ class ImprovedGhostStaticGenerator:
             logging.error(f"Error fetching URL {url}: {e}")
             return
     
-        for img in soup.find_all('img'):
+        for img in soup.find_all(['img', 'source']):
             srcset = img.get('srcset') or img.get('data-srcset', '')
             src = img.get('src') or img.get('data-src', '')
             
@@ -147,7 +147,7 @@ class ImprovedGhostStaticGenerator:
             all_urls.extend([s.split()[0] for s in srcset.split(',') if s.strip()])
             
             for img_url in all_urls:
-                if self.is_same_domain(img_url):
+                if img_url and self.is_same_domain(img_url):
                     try:
                         img_response = requests.get(img_url, timeout=30)
                         if img_response.status_code == 200:
@@ -158,7 +158,23 @@ class ImprovedGhostStaticGenerator:
                             logging.warning(f"Failed to scrape image {img_url}: HTTP {img_response.status_code}")
                     except requests.exceptions.RequestException as e:
                         logging.warning(f"Failed to scrape image {img_url}: {e}")
-
+    
+        # Also check for background images in inline styles
+        for tag in soup.find_all(style=True):
+            style = tag['style']
+            urls = re.findall(r'url\([\'"]?([^\'"]+)[\'"]?\)', style)
+            for img_url in urls:
+                if self.is_same_domain(img_url):
+                    try:
+                        img_response = requests.get(img_url, timeout=30)
+                        if img_response.status_code == 200:
+                            self.file_urls.add(img_url)
+                            self.save_file(img_url, img_response.content, os.path.splitext(img_url)[1], is_binary=True)
+                            logging.info(f"Scraped background image: {img_url}")
+                        else:
+                            logging.warning(f"Failed to scrape background image {img_url}: HTTP {img_response.status_code}")
+                    except requests.exceptions.RequestException as e:
+                        logging.warning(f"Failed to scrape background image {img_url}: {e}")
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
@@ -326,16 +342,8 @@ class ImprovedGhostStaticGenerator:
                                 source['srcset'] = ', '.join(srcset)
                                 if sizes:
                                     source['sizes'] = sizes
-                                picture.insert(0, source)
+                                picture.append(source)
                                 logging.info(f"Created source for {format_type}")
-    
-                        # Preserve original image as the last source
-                        if original_srcset:
-                            original_source = soup.new_tag('source')
-                            original_source['srcset'] = original_srcset
-                            if sizes:
-                                original_source['sizes'] = sizes
-                            picture.append(original_source)
     
                         # Ensure the img tag is the last child of picture
                         picture.append(img)
