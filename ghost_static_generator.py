@@ -311,6 +311,11 @@ class ImprovedGhostStaticGenerator:
                         original_srcset = img.get('srcset') or img.get('data-srcset', '')
                         sizes = img.get('sizes', '')
     
+                        # Update src and srcset to use target URL
+                        img['src'] = self.update_url(src)
+                        if original_srcset:
+                            img['srcset'] = ', '.join([f"{self.update_url(s.split()[0])} {s.split()[1]}" if len(s.split()) > 1 else self.update_url(s) for s in original_srcset.split(',')])
+    
                         # Create picture tag
                         picture = soup.new_tag('picture')
                         img.insert_before(picture)
@@ -328,7 +333,7 @@ class ImprovedGhostStaticGenerator:
                                         new_src = re.sub(r'\.[^.]+$', f'.{format_ext}', orig_src)
                                         local_path = self.url_to_local_path(new_src)
                                         if local_path and os.path.exists(local_path):
-                                            srcset.append(f"{new_src} {width}")
+                                            srcset.append(f"{self.update_url(new_src)} {width}")
                             
                             if srcset:
                                 source = soup.new_tag('source', type=format_type)
@@ -353,10 +358,35 @@ class ImprovedGhostStaticGenerator:
                     
                     logging.info(f"Processed {images_processed} images in {file_path}")
                     
+                    # Update all URLs in the HTML content
+                    content = self.update_all_urls(str(soup))
+                    
                     with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write(str(soup))
+                        f.write(content)
                     logging.info(f"Updated {file_path}")
+    
+    def update_url(self, url):
+        return url.replace(self.source_url, self.target_url)
+    
+    def update_all_urls(self, content):
+        return content.replace(self.source_url, self.target_url)
 
+    def update_urls_in_all_files(self):
+        for root, _, files in os.walk(self.public_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                _, file_extension = os.path.splitext(file)
+                
+                if file_extension.lower() in ['.html', '.xml', '.css', '.js', '.json']:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    updated_content = self.update_all_urls(content)
+                    
+                    if updated_content != content:
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(updated_content)
+                        logging.info(f"Updated URLs in {file_path}")
 
     def url_to_local_path(self, url):
         if url.startswith('/'):
@@ -409,7 +439,7 @@ class ImprovedGhostStaticGenerator:
         self.scrape_site()
         self.convert_images()
         self.update_html_for_image_formats()
-        self.replace_urls_in_files()
+        self.update_urls_in_all_files()  # New step
         self.commit_and_push()
         logging.info("Static site generation process completed")
 
