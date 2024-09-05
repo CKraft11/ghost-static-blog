@@ -112,10 +112,10 @@ class ImprovedGhostStaticGenerator:
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type:
                 self.process_html(url, response.text)
+                self.scrape_image_sizes(url)  # Scrape image sizes for all HTML pages
             elif 'image' in content_type:
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
-                self.scrape_image_sizes(url)
             elif any(type in content_type for type in ['text/css', 'javascript', 'application']):
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
@@ -131,66 +131,40 @@ class ImprovedGhostStaticGenerator:
         time.sleep(0.1)
         
     def scrape_image_sizes(self, url):
-        parsed_url = urlparse(url)
-        path_parts = parsed_url.path.split('/')
-        
-        # Find the index of 'content' in the path
         try:
-            content_index = path_parts.index('content')
-        except ValueError:
-            logging.warning(f"Unable to determine image sizes for {url}")
-            return
-        
-        # Construct the base URL for the image (without size specification)
-        if 'size' in path_parts:
-            size_index = path_parts.index('size')
-            base_path = '/'.join(path_parts[:size_index] + path_parts[size_index+2:])
-        else:
-            base_path = '/'.join(path_parts)
-        base_url = parsed_url._replace(path=base_path).geturl()
-        
-        # Extract the year and month from the URL
-        year_month = '/'.join(path_parts[-3:-1])  # This should give us '2024/02' from your example
-        
-        # Fetch the HTML page that contains the image
-        try:
-            response = requests.get(base_url, timeout=30)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error fetching base URL {base_url}: {e}")
+            logging.error(f"Error fetching URL {url}: {e}")
             return
-        
-        # Find all img tags with srcset attribute
-        img_tags = soup.find_all('img', srcset=True)
-        
-        for img in img_tags:
+    
+        for img in soup.find_all('img', srcset=True):
             srcset = img['srcset']
-            # Parse the srcset attribute
             for src_entry in srcset.split(','):
                 src_entry = src_entry.strip()
                 if src_entry:
                     parts = src_entry.split()
-                    if len(parts) == 2:
-                        size_url, _ = parts
-                        # Only process URLs that are from the same domain and contain 'size'
+                    if len(parts) >= 1:
+                        size_url = parts[0]
                         if self.is_same_domain(size_url) and 'size' in size_url:
-                            # Construct the full URL with the correct structure
-                            size_path_parts = urlparse(size_url).path.split('/')
-                            size = size_path_parts[size_path_parts.index('size') + 1]
-                            filename = path_parts[-1]
-                            full_size_url = f"{self.source_url}/content/images/size/{size}/{year_month}/{filename}"
-                            
                             try:
-                                response = requests.get(full_size_url, timeout=30)
-                                if response.status_code == 200:
-                                    self.file_urls.add(full_size_url)
-                                    self.save_file(full_size_url, response.content, os.path.splitext(full_size_url)[1], is_binary=True)
-                                    logging.info(f"Scraped additional image size: {full_size_url}")
+                                size_response = requests.get(size_url, timeout=30)
+                                if size_response.status_code == 200:
+                                    self.file_urls.add(size_url)
+                                    self.save_file(size_url, size_response.content, os.path.splitext(size_url)[1], is_binary=True)
+                                    logging.info(f"Scraped additional image size: {size_url}")
                                 else:
-                                    logging.warning(f"Failed to scrape image size {full_size_url}: HTTP {response.status_code}")
+                                    logging.warning(f"Failed to scrape image size {size_url}: HTTP {size_response.status_code}")
                             except requests.exceptions.RequestException as e:
-                                logging.warning(f"Failed to scrape image size {full_size_url}: {e}")
+                                logging.warning(f"Failed to scrape image size {size_url}: {e}")
+    
+        # Also scrape the original URL if it's an image
+        content_type = response.headers.get('content-type', '').lower()
+        if 'image' in content_type:
+            self.file_urls.add(url)
+            self.save_file(url, response.content, os.path.splitext(url)[1], is_binary=True)
+            logging.info(f"Scraped original image: {url}")
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
