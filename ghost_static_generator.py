@@ -11,6 +11,8 @@ import concurrent.futures
 import requests
 from urllib.parse import urljoin, urlparse
 import time
+import mimetypes
+import imghdr
 
 class ImprovedGhostStaticGenerator:
     def __init__(self, source_url, target_url, repo_path):
@@ -18,10 +20,8 @@ class ImprovedGhostStaticGenerator:
         self.target_url = target_url
         self.repo_path = repo_path
         self.public_dir = os.path.join(repo_path, 'public')
-        self.image_dir = os.path.join(self.public_dir, 'content', 'images')
-        self.renders_dir = os.path.join(self.public_dir, 'content', 'renders')
         self.visited_urls = set()
-        self.image_urls = set()
+        self.file_urls = set()
 
     def run(self):
         self.update_repo()
@@ -67,12 +67,8 @@ class ImprovedGhostStaticGenerator:
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type:
                 self.process_html(url, response.text)
-            elif 'text/css' in content_type:
-                self.save_file(url, response.text, '.css')
-            elif 'javascript' in content_type:
-                self.save_file(url, response.text, '.js')
-            elif 'image' in content_type:
-                self.image_urls.add(url)
+            elif any(type in content_type for type in ['text/css', 'javascript', 'image', 'application']):
+                self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
             else:
                 print(f"Skipping unsupported content type for {url}: {content_type}")
@@ -88,17 +84,12 @@ class ImprovedGhostStaticGenerator:
         self.save_file(url, html_content, '.html')
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        for tag in soup.find_all(['a', 'link', 'script', 'img']):
-            if tag.name == 'a' and tag.get('href'):
-                new_url = urljoin(url, tag['href'])
+        for tag in soup.find_all(['a', 'link', 'script', 'img', 'source']):
+            attr = tag.get('href') or tag.get('src')
+            if attr:
+                new_url = urljoin(url, attr)
                 if self.is_same_domain(new_url):
                     self.scrape_url(new_url)
-            elif tag.name in ['link', 'script'] and tag.get('src'):
-                self.scrape_url(urljoin(url, tag['src']))
-            elif tag.name == 'img' and tag.get('src'):
-                img_url = urljoin(url, tag['src'])
-                self.image_urls.add(img_url)
-                self.scrape_url(img_url)
 
     def is_same_domain(self, url):
         return urlparse(url).netloc == urlparse(self.source_url).netloc
@@ -126,16 +117,21 @@ class ImprovedGhostStaticGenerator:
                 img = Image.open(img_path)
                 base_name = os.path.splitext(img_path)[0]
                 img.save(f"{base_name}.webp", 'WEBP')
+                try:
+                    img.save(f"{base_name}.avif", 'AVIF')
+                    print(f"Converted to AVIF: {img_path}")
+                except Exception as e:
+                    print(f"Error converting to AVIF {img_path}: {str(e)}")
                 print(f"Converted to WebP: {img_path}")
             except Exception as e:
                 print(f"Error processing {img_path}: {str(e)}")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             futures = []
-            for img_url in self.image_urls:
-                img_path = os.path.join(self.public_dir, urlparse(img_url).path.lstrip('/'))
-                if os.path.exists(img_path):
-                    futures.append(executor.submit(process_image, img_path))
+            for file_url in self.file_urls:
+                file_path = os.path.join(self.public_dir, urlparse(file_url).path.lstrip('/'))
+                if os.path.exists(file_path) and imghdr.what(file_path) is not None:
+                    futures.append(executor.submit(process_image, file_path))
             
             for future in concurrent.futures.as_completed(futures):
                 future.result()
@@ -154,10 +150,27 @@ class ImprovedGhostStaticGenerator:
                         if src:
                             base_src = os.path.splitext(src)[0]
                             webp_path = f"{base_src}.webp"
+                            avif_path = f"{base_src}.avif"
+                            
+                            picture = soup.new_tag('picture')
+                            img.wrap(picture)
+                            
+                            if os.path.exists(os.path.join(self.public_dir, avif_path.lstrip('/'))):
+                                avif_source = soup.new_tag('source', srcset=avif_path, type="image/avif")
+                                picture.insert(0, avif_source)
                             
                             if os.path.exists(os.path.join(self.public_dir, webp_path.lstrip('/'))):
-                                img['srcset'] = f"{webp_path} 1x"
-                                img['onerror'] = f"this.onerror=null; this.src='{src}';"
+                                webp_source = soup.new_tag('source', srcset=webp_path, type="image/webp")
+                                picture.insert(1, webp_source)
+                            
+                            img['loading'] = 'lazy'
+                            img['decoding'] = 'async'
+                            
+                            # Preserve original width and height if present
+                            if img.get('width') and img.get('height'):
+                                for source in picture.find_all('source'):
+                                    source['width'] = img['width']
+                                    source['height'] = img['height']
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
@@ -170,7 +183,6 @@ class ImprovedGhostStaticGenerator:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                     
-                    # Replace the source URL with the target URL
                     content = content.replace(self.source_url, self.target_url)
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
@@ -190,7 +202,7 @@ class ImprovedGhostStaticGenerator:
 
 if __name__ == "__main__":
     source_url = "http://10.0.0.222:2368"  # Change this to your local Ghost URL
-    target_url = "https://dev.cadenkraft.com"  # Change this to your target URL
+    target_url = "https://cadenkraft.com"  # Change this to your target URL
     repo_path = "/home/ghost-static-site-gen"  # Change this to your local repo path
 
     generator = ImprovedGhostStaticGenerator(source_url, target_url, repo_path)
