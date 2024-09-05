@@ -202,7 +202,7 @@ class ImprovedGhostStaticGenerator:
 
 if __name__ == "__main__":
     source_url = "http://10.0.0.222:2368"  # Change this to your local Ghost URL
-    target_url = "https://cadenkraft.com"  # Change this to your target URL
+    target_url = "https://dev.cadenkraft.com"  # Change this to your target URL
     repo_path = "/home/ghost-static-site-gen"  # Change this to your local repo path
 
     generator = ImprovedGhostStaticGenerator(source_url, target_url, repo_path)
