@@ -112,13 +112,13 @@ class ImprovedGhostStaticGenerator:
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type:
                 self.process_html(url, response.text)
-            elif any(type in content_type for type in ['text/css', 'javascript', 'image', 'application']):
+            elif 'image' in content_type:
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
-                
-                # If this is an image, also scrape other sizes
-                if 'image' in content_type:
-                    self.scrape_image_sizes(url)
+                self.scrape_image_sizes(url)
+            elif any(type in content_type for type in ['text/css', 'javascript', 'application']):
+                self.file_urls.add(url)
+                self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
             else:
                 logging.info(f"Saving file with content-type {content_type}: {url}")
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
@@ -131,15 +131,8 @@ class ImprovedGhostStaticGenerator:
         time.sleep(0.1)
         
     def scrape_image_sizes(self, url):
-        # List of common image sizes used by Ghost
-        sizes = ['w600', 'w1000', 'w1600', 'w2400']
-        
         parsed_url = urlparse(url)
         path_parts = parsed_url.path.split('/')
-        
-        # Check if the URL already contains a size specification
-        if any(size in path_parts for size in sizes):
-            return
         
         # Find the index of 'content' in the path
         try:
@@ -148,22 +141,41 @@ class ImprovedGhostStaticGenerator:
             logging.warning(f"Unable to determine image sizes for {url}")
             return
         
-        # Insert size into the path for each size
-        for size in sizes:
-            size_path = path_parts.copy()
-            size_path.insert(content_index + 1, 'size')
-            size_path.insert(content_index + 2, size)
-            size_url = parsed_url._replace(path='/'.join(size_path)).geturl()
-            
-            # Attempt to scrape the sized image
-            try:
-                response = requests.get(size_url, timeout=30)
-                if response.status_code == 200:
-                    self.file_urls.add(size_url)
-                    self.save_file(size_url, response.content, os.path.splitext(size_url)[1], is_binary=True)
-                    logging.info(f"Scraped additional image size: {size_url}")
-            except requests.exceptions.RequestException as e:
-                logging.warning(f"Failed to scrape image size {size_url}: {e}")
+        # Construct the base URL for the image (without size specification)
+        base_path = '/'.join(path_parts[:content_index+1] + path_parts[content_index+3:])
+        base_url = parsed_url._replace(path=base_path).geturl()
+        
+        # Fetch the HTML page that contains the image
+        try:
+            response = requests.get(base_url, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching base URL {base_url}: {e}")
+            return
+        
+        # Find all img tags with srcset attribute
+        img_tags = soup.find_all('img', srcset=True)
+        
+        for img in img_tags:
+            srcset = img['srcset']
+            # Parse the srcset attribute
+            for src_entry in srcset.split(','):
+                src_entry = src_entry.strip()
+                if src_entry:
+                    parts = src_entry.split()
+                    if len(parts) == 2:
+                        size_url, _ = parts
+                        # Only process URLs that are from the same domain and contain 'size'
+                        if self.is_same_domain(size_url) and 'size' in size_url:
+                            try:
+                                response = requests.get(size_url, timeout=30)
+                                if response.status_code == 200:
+                                    self.file_urls.add(size_url)
+                                    self.save_file(size_url, response.content, os.path.splitext(size_url)[1], is_binary=True)
+                                    logging.info(f"Scraped additional image size: {size_url}")
+                            except requests.exceptions.RequestException as e:
+                                logging.warning(f"Failed to scrape image size {size_url}: {e}")
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
