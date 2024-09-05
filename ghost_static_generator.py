@@ -145,12 +145,18 @@ class ImprovedGhostStaticGenerator:
                     for img in soup.find_all('img'):
                         src = img.get('src')
                         if src:
-                            base_src = os.path.splitext(src)[0]
+                            # Convert the src URL to a local file path
+                            local_src = self.url_to_local_path(src)
+                            if not local_src:
+                                logging.warning(f"Skipping external image: {src}")
+                                continue
+
+                            base_src = os.path.splitext(local_src)[0]
                             jxl_path = f"{base_src}.jxl"
                             avif_path = f"{base_src}.avif"
                             webp_path = f"{base_src}.webp"
                             
-                            logging.info(f"Processing image: {src}")
+                            logging.info(f"Processing image: {local_src}")
                             
                             parent = img.parent
                             if parent.name != 'picture':
@@ -167,15 +173,14 @@ class ImprovedGhostStaticGenerator:
                             
                             sources_added = 0
                             for format_path, format_type in [(jxl_path, "image/jxl"), (avif_path, "image/avif"), (webp_path, "image/webp")]:
-                                full_path = os.path.join(self.public_dir, format_path.lstrip('/'))
-                                if os.path.exists(full_path):
+                                if os.path.exists(format_path):
                                     source = soup.new_tag('source', type=format_type)
-                                    source['srcset'] = format_path
+                                    source['srcset'] = self.local_path_to_url(format_path)
                                     picture.insert(sources_added, source)
                                     sources_added += 1
                                     logging.info(f"Added source for {format_type}")
                                 else:
-                                    logging.warning(f"File not found: {full_path}")
+                                    logging.warning(f"File not found: {format_path}")
                             
                             for attr in ['srcset', 'sizes', 'width', 'height']:
                                 if img.get(attr):
@@ -191,6 +196,19 @@ class ImprovedGhostStaticGenerator:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
                     logging.info(f"Updated {file_path}")
+
+    def url_to_local_path(self, url):
+        # Convert a URL to a local file path
+        parsed_url = urlparse(url)
+        if parsed_url.netloc and parsed_url.netloc not in [urlparse(self.source_url).netloc, urlparse(self.target_url).netloc]:
+            return None  # External URL
+        relative_path = parsed_url.path.lstrip('/')
+        return os.path.join(self.public_dir, relative_path)
+
+    def local_path_to_url(self, local_path):
+        # Convert a local file path back to a URL
+        relative_path = os.path.relpath(local_path, self.public_dir)
+        return urllib.parse.urljoin(self.target_url, relative_path.replace('\\', '/'))
 
     def replace_urls_in_files(self):
         for root, _, files in os.walk(self.public_dir):
