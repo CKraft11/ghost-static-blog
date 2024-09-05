@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import argparse
+import copy
 
 # Check if running as root
 if os.geteuid() == 0:
@@ -343,8 +344,9 @@ class ImprovedGhostStaticGenerator:
                                 picture.append(source)
                                 logging.info(f"Created source for {format_type}")
     
-                        # Move the original img tag into the picture tag
-                        picture.append(img)
+                        # Create a copy of the original img tag for the picture element
+                        picture_img = copy.deepcopy(img)
+                        picture.append(picture_img)
     
                         # Ensure all original attributes of the img tag are preserved
                         for attr, value in img.attrs.items():
@@ -439,7 +441,7 @@ class ImprovedGhostStaticGenerator:
         self.scrape_site()
         self.convert_images()
         self.update_html_for_image_formats()
-        self.update_urls_in_all_files()  # New step
+        self.update_urls_in_all_files()
         self.commit_and_push()
         logging.info("Static site generation process completed")
 
