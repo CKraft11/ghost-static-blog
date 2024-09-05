@@ -49,6 +49,7 @@ import time
 import mimetypes
 import imghdr
 import logging
+import shutil
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -246,7 +247,21 @@ class ImprovedGhostStaticGenerator:
     
         except requests.exceptions.RequestException as e:
             logging.error(f"Error fetching iframe content from {iframe_src}: {e}")
+    
+    def copy_renders_folder(self):
+        source_renders_path = '/helium/ghost/ghost-backup/content/renders/'
+        destination_renders_path = os.path.join(self.public_dir, 'content', 'renders')
+    
+        try:
+            if os.path.exists(destination_renders_path):
+                shutil.rmtree(destination_renders_path)
+            
+            shutil.copytree(source_renders_path, destination_renders_path)
+            logging.info(f"Successfully copied renders folder to {destination_renders_path}")
+        except Exception as e:
+            logging.error(f"Error copying renders folder: {str(e)}")
 
+    
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -472,6 +487,15 @@ class ImprovedGhostStaticGenerator:
                     
                     updated_content = self.update_all_urls(content)
                     
+                    # Update iframe src URLs
+                    if file_extension.lower() == '.html':
+                        soup = BeautifulSoup(updated_content, 'html.parser')
+                        for iframe in soup.find_all('iframe'):
+                            src = iframe.get('src')
+                            if src:
+                                iframe['src'] = self.update_url(src)
+                        updated_content = str(soup)
+                    
                     if updated_content != content:
                         with open(file_path, 'w', encoding='utf-8') as f:
                             f.write(updated_content)
@@ -528,6 +552,7 @@ class ImprovedGhostStaticGenerator:
         self.scrape_site()
         self.convert_images()
         self.update_html_for_image_formats()
+        self.copy_renders_folder()  # New step to copy the renders folder
         self.update_urls_in_all_files()
         self.commit_and_push()
         logging.info("Static site generation process completed")
