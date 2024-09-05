@@ -149,28 +149,46 @@ class ImprovedGhostStaticGenerator:
                         src = img.get('src')
                         if src:
                             base_src = os.path.splitext(src)[0]
-                            webp_path = f"{base_src}.webp"
+                            jxl_path = f"{base_src}.jxl"
                             avif_path = f"{base_src}.avif"
+                            webp_path = f"{base_src}.webp"
                             
-                            picture = soup.new_tag('picture')
-                            img.wrap(picture)
+                            # Check if the image is already wrapped in a picture tag
+                            parent = img.parent
+                            if parent.name != 'picture':
+                                picture = soup.new_tag('picture')
+                                img.wrap(picture)
+                            else:
+                                picture = parent
+                            
+                            # Remove any existing source tags
+                            for source in picture.find_all('source'):
+                                source.decompose()
+                            
+                            # Add source tags for JXL, AVIF, and WebP
+                            if os.path.exists(os.path.join(self.public_dir, jxl_path.lstrip('/'))):
+                                jxl_source = soup.new_tag('source', type="image/jxl")
+                                jxl_source['srcset'] = jxl_path
+                                picture.insert(0, jxl_source)
                             
                             if os.path.exists(os.path.join(self.public_dir, avif_path.lstrip('/'))):
-                                avif_source = soup.new_tag('source', srcset=avif_path, type="image/avif")
-                                picture.insert(0, avif_source)
+                                avif_source = soup.new_tag('source', type="image/avif")
+                                avif_source['srcset'] = avif_path
+                                picture.insert(1, avif_source)
                             
                             if os.path.exists(os.path.join(self.public_dir, webp_path.lstrip('/'))):
-                                webp_source = soup.new_tag('source', srcset=webp_path, type="image/webp")
-                                picture.insert(1, webp_source)
+                                webp_source = soup.new_tag('source', type="image/webp")
+                                webp_source['srcset'] = webp_path
+                                picture.insert(2, webp_source)
                             
-                            img['loading'] = 'lazy'
-                            img['decoding'] = 'async'
+                            # Preserve original srcset, sizes, and other attributes
+                            for attr in ['srcset', 'sizes', 'width', 'height']:
+                                if img.get(attr):
+                                    for source in picture.find_all('source'):
+                                        source[attr] = img[attr]
                             
-                            # Preserve original width and height if present
-                            if img.get('width') and img.get('height'):
-                                for source in picture.find_all('source'):
-                                    source['width'] = img['width']
-                                    source['height'] = img['height']
+                            # Ensure the img tag is the last child of the picture tag
+                            picture.append(img.extract())
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(str(soup))
