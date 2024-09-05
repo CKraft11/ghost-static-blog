@@ -113,7 +113,8 @@ class ImprovedGhostStaticGenerator:
             content_type = response.headers.get('content-type', '').lower()
             if 'text/html' in content_type:
                 self.process_html(url, response.text)
-                self.scrape_image_sizes(url)  # Scrape image sizes for all HTML pages
+                self.scrape_image_sizes(url)
+                self.scrape_meta_images(url)  # Add this line
             elif 'image' in content_type:
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
@@ -131,6 +132,30 @@ class ImprovedGhostStaticGenerator:
     
         time.sleep(0.1)
         
+    def scrape_meta_images(self, url):
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching URL {url}: {e}")
+            return
+    
+        meta_images = soup.find_all('meta', property=['og:image', 'twitter:image'])
+        for meta in meta_images:
+            img_url = meta.get('content')
+            if img_url and self.is_same_domain(img_url):
+                try:
+                    img_response = requests.get(img_url, timeout=30)
+                    if img_response.status_code == 200:
+                        self.file_urls.add(img_url)
+                        self.save_file(img_url, img_response.content, os.path.splitext(img_url)[1], is_binary=True)
+                        logging.info(f"Scraped meta image: {img_url}")
+                    else:
+                        logging.warning(f"Failed to scrape meta image {img_url}: HTTP {img_response.status_code}")
+                except requests.exceptions.RequestException as e:
+                    logging.warning(f"Failed to scrape meta image {img_url}: {e}")
+
     def scrape_image_sizes(self, url):
         try:
             response = requests.get(url, timeout=30)
@@ -301,6 +326,13 @@ class ImprovedGhostStaticGenerator:
                     
                     soup = BeautifulSoup(content, 'html.parser')
                     images_processed = 0
+    
+                    # Update Open Graph meta tags
+                    og_image = soup.find('meta', property='og:image')
+                    if og_image:
+                        og_image['content'] = self.update_url(og_image['content'])
+                        logging.info(f"Updated og:image: {og_image['content']}")
+    
                     for img in soup.find_all('img'):
                         src = img.get('src') or img.get('data-src')
                         if not src:
@@ -319,7 +351,7 @@ class ImprovedGhostStaticGenerator:
     
                         # Create picture tag
                         picture = soup.new_tag('picture')
-                        img.insert_before(picture)
+                        img.wrap(picture)
     
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
@@ -341,12 +373,8 @@ class ImprovedGhostStaticGenerator:
                                 source['srcset'] = ', '.join(srcset)
                                 if sizes:
                                     source['sizes'] = sizes
-                                picture.append(source)
+                                picture.insert(0, source)
                                 logging.info(f"Created source for {format_type}")
-    
-                        # Create a copy of the original img tag for the picture element
-                        picture_img = copy.deepcopy(img)
-                        picture.append(picture_img)
     
                         # Ensure all original attributes of the img tag are preserved
                         for attr, value in img.attrs.items():
