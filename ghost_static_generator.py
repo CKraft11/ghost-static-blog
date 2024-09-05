@@ -178,7 +178,7 @@ class ImprovedGhostStaticGenerator:
                                     format_path = f"{base_src}{size_suffix}.{format_ext}"
                                     if os.path.exists(format_path):
                                         format_url = self.local_path_to_url(format_path)
-                                        width = size[1:] if size else 'original'
+                                        width = size[1:] if size else img.get('width', 'original')
                                         srcset.append(f"{format_url} {width}w")
                                 
                                 if srcset:
@@ -186,6 +186,9 @@ class ImprovedGhostStaticGenerator:
                                     source['srcset'] = ', '.join(srcset)
                                     if img.get('sizes'):
                                         source['sizes'] = img['sizes']
+                                    for attr in ['width', 'height']:
+                                        if img.get(attr):
+                                            source[attr] = img[attr]
                                     picture.insert(0, source)
                                     logging.info(f"Added source for {format_type}")
                             
@@ -196,17 +199,14 @@ class ImprovedGhostStaticGenerator:
                                 original_path = f"{base_src}{size_suffix}{original_ext}"
                                 if os.path.exists(original_path):
                                     original_url = self.local_path_to_url(original_path)
-                                    width = size[1:] if size else 'original'
+                                    width = size[1:] if size else img.get('width', 'original')
                                     original_srcset.append(f"{original_url} {width}w")
                             
                             if original_srcset:
                                 img['srcset'] = ', '.join(original_srcset)
                             
-                            for attr in ['sizes', 'width', 'height', 'loading', 'decoding', 'class']:
-                                if img.get(attr):
-                                    for source in picture.find_all('source'):
-                                        source[attr] = img[attr]
-                                    logging.info(f"Preserved attribute: {attr}")
+                            # Ensure lazy loading is on the img element
+                            img['loading'] = 'lazy'
                             
                             images_processed += 1
                     
