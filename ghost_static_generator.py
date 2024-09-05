@@ -115,6 +115,10 @@ class ImprovedGhostStaticGenerator:
             elif any(type in content_type for type in ['text/css', 'javascript', 'image', 'application']):
                 self.file_urls.add(url)
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
+                
+                # If this is an image, also scrape other sizes
+                if 'image' in content_type:
+                    self.scrape_image_sizes(url)
             else:
                 logging.info(f"Saving file with content-type {content_type}: {url}")
                 self.save_file(url, response.content, os.path.splitext(urlparse(url).path)[1], is_binary=True)
@@ -125,6 +129,41 @@ class ImprovedGhostStaticGenerator:
             logging.error(f"Unexpected error scraping {url}: {str(e)}")
     
         time.sleep(0.1)
+        
+    def scrape_image_sizes(self, url):
+        # List of common image sizes used by Ghost
+        sizes = ['w600', 'w1000', 'w1600', 'w2400']
+        
+        parsed_url = urlparse(url)
+        path_parts = parsed_url.path.split('/')
+        
+        # Check if the URL already contains a size specification
+        if any(size in path_parts for size in sizes):
+            return
+        
+        # Find the index of 'content' in the path
+        try:
+            content_index = path_parts.index('content')
+        except ValueError:
+            logging.warning(f"Unable to determine image sizes for {url}")
+            return
+        
+        # Insert size into the path for each size
+        for size in sizes:
+            size_path = path_parts.copy()
+            size_path.insert(content_index + 1, 'size')
+            size_path.insert(content_index + 2, size)
+            size_url = parsed_url._replace(path='/'.join(size_path)).geturl()
+            
+            # Attempt to scrape the sized image
+            try:
+                response = requests.get(size_url, timeout=30)
+                if response.status_code == 200:
+                    self.file_urls.add(size_url)
+                    self.save_file(size_url, response.content, os.path.splitext(size_url)[1], is_binary=True)
+                    logging.info(f"Scraped additional image size: {size_url}")
+            except requests.exceptions.RequestException as e:
+                logging.warning(f"Failed to scrape image size {size_url}: {e}")
 
     def process_html(self, url, html_content):
         self.save_file(url, html_content, '.html')
@@ -258,31 +297,15 @@ class ImprovedGhostStaticGenerator:
     
                         logging.info(f"Processing image with src: {src}")
     
-                        # Handle relative paths
-                        if not src.startswith(('http://', 'https://', '//')):
-                            src = '/' + src.lstrip('/')
-    
                         original_srcset = img.get('srcset') or img.get('data-srcset', '')
                         sizes = img.get('sizes', '')
     
-                        parent = img.parent
-                        is_gallery_image = parent.find_parent(class_='kg-gallery-image') is not None
-                        
-                        if parent.name != 'picture':
-                            picture = soup.new_tag('picture')
-                            img.wrap(picture)
-                            logging.info("Created new picture tag")
-                        else:
-                            picture = parent
-                            logging.info("Using existing picture tag")
-                        
-                        # Remove existing source tags
-                        for source in picture.find_all('source'):
-                            source.decompose()
-                            logging.info("Removed existing source tag")
+                        picture = soup.new_tag('picture')
+                        img.wrap(picture)
                         
                         formats = [('jxl', 'image/jxl'), ('avif', 'image/avif'), ('webp', 'image/webp')]
                         
+                        sources_added = False
                         for format_ext, format_type in formats:
                             srcset = []
                             for src_entry in original_srcset.split(','):
@@ -303,11 +326,19 @@ class ImprovedGhostStaticGenerator:
                                     source['sizes'] = sizes
                                 picture.insert(0, source)
                                 logging.info(f"Created source for {format_type}")
+                                sources_added = True
                         
-                        # Ensure the original img tag is the last child of the picture tag
-                        picture.append(img)
+                        # Add a source for the original format only if new sources were added
+                        if sources_added:
+                            original_source = soup.new_tag('source')
+                            original_source['srcset'] = original_srcset
+                            if sizes:
+                                original_source['sizes'] = sizes
+                            picture.insert(-1, original_source)
+                        else:
+                            # If no new sources were added, remove the picture tag and keep the original img
+                            img.unwrap()
                         
-                        # Ensure lazy loading is on the img element
                         img['loading'] = 'lazy'
                         
                         images_processed += 1
