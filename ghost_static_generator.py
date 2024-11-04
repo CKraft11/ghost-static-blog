@@ -530,6 +530,7 @@ class ImprovedGhostStaticGenerator:
                         content = f.read()
                     
                     content = content.replace(self.source_url, self.target_url)
+                    content = content.replace("10.0.0.222", "cadenkraft.com")
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(content)
