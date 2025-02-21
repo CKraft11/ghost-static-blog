@@ -31,7 +31,7 @@
 <meta content="https://cadenkraft.com/creating-a-ghost-blog-with-free-webhosting/" property="og:url"/>
 <meta content="https://cadenkraft.com/content/images/2022/02/ghost-blog.png" property="og:image"/>
 <meta content="2022-02-23T04:58:02.000Z" property="article:published_time"/>
-<meta content="2025-02-21T17:08:06.000Z" property="article:modified_time"/>
+<meta content="2025-02-21T17:10:41.000Z" property="article:modified_time"/>
 <meta content="Tutorial" property="article:tag"/>
 <meta content="Coding" property="article:tag"/>
 <meta content="summary_large_image" name="twitter:card"/>
@@ -69,7 +69,7 @@
     "headline": "Ghost Blog with Free Webhosting",
     "url": "https://cadenkraft.com/creating-a-ghost-blog-with-free-webhosting/",
     "datePublished": "2022-02-23T04:58:02.000Z",
-    "dateModified": "2025-02-21T17:08:06.000Z",
+    "dateModified": "2025-02-21T17:10:41.000Z",
     "image": {
         "@type": "ImageObject",
         "url": "https://cadenkraft.com/content/images/2022/02/ghost-blog.png",
@@ -879,7 +879,7 @@ cd ghost/
 wget https://github.com/CKraft11/ghost-static-blog/blob/main/ghost_static_generator.py
 git init</code></pre><p>Next we need to set up a python virtual environment and install the dependencies for my script.</p><pre><code class="language-bash">python3 -m venv ghost-static-env
 source ghost-static-env/bin/activate
-pip install pillow-avif-plugin requests beautifulsoup4 pillow gitpython</code></pre><p>Then we have to go online to Github and create a few things. Starting with the repository, create a repository with any name you like and copy the URL under the "code" drop-down.</p><div class="kg-card kg-callout-card kg-callout-card-blue"><div class="kg-callout-emoji">⚠️</div><div class="kg-callout-text">If your do not have a custom domain the name of your Github repo should be your Github username or the static site generator might break!</div></div><p></p><figure class="kg-card kg-image-card"><picture><img alt="" class="kg-image" height="252" loading="lazy" src="https://cadenkraft.com/content/images/2022/02/image-13.png" width="373"/></picture></figure><p>We want to add this repository as a remote repository location for git to push the files. We can do this by running </p><pre><code class="language-bash">git remote add origin https://github.com/yourlinkhere.git</code></pre><p>We need to go back to GitHub and generate a personal access token that ecto1 can use when creating the site to push files to your repo. Go to this <a href="https://github.com/settings/tokens?ref=10.0.0.222">link here</a> and create a new token with a name of your choice and give it repo permissions. Copy this link and keep it somewhere safe (e.g., not in your git repository folder). Next, we can run the following commands to test everything working.</p><figure class="kg-card kg-code-card"><pre><code class="language-bash">touch test
+pip install pillow-avif-plugin requests beautifulsoup4 pillow gitpython</code></pre><p>Then we have to go online to Github and create a few things. Starting with the repository, create a repository with any name you like and copy the URL under the "code" drop-down.</p><div class="kg-card kg-callout-card kg-callout-card-blue"><div class="kg-callout-emoji">⚠️</div><div class="kg-callout-text">If your do not have a custom domain the name of your Github repo should be your Github username or the static site generator might break!</div></div><p></p><figure class="kg-card kg-image-card"><picture><img alt="" class="kg-image" height="252" loading="lazy" src="https://cadenkraft.com/content/images/2022/02/image-13.png" width="373"/></picture></figure><p>We want to add this repository as a remote repository location for git to push the files. We can do this by running </p><pre><code class="language-bash">git remote add origin https://github.com/yourlinkhere.git</code></pre><p>We need to go back to GitHub and generate a personal access token that my script can use when creating the site to push files to your repo. Go to this <a href="https://github.com/settings/tokens?ref=10.0.0.222">link here</a> and create a new token with a name of your choice and give it repo permissions. Copy this link and keep it somewhere safe (e.g., not in your git repository folder). Next, we can run the following commands to test everything working.</p><figure class="kg-card kg-code-card"><pre><code class="language-bash">touch test
 git add .
 git commit -m "first commit"
 git push -u origin master
