@@ -251,13 +251,48 @@ class ImprovedGhostStaticGenerator:
     def copy_renders_folder(self):
         source_renders_path = '/helium/ghost/ghost-backup/content/renders/'
         destination_renders_path = os.path.join(self.public_dir, 'content', 'renders')
-    
+        
+        # Make sure destination directory exists
+        os.makedirs(destination_renders_path, exist_ok=True)
+        
+        # Track stats
+        files_copied = 0
+        files_skipped = 0
+        
         try:
-            if os.path.exists(destination_renders_path):
-                shutil.rmtree(destination_renders_path)
+            # Walk through source directory
+            for root, dirs, files in os.walk(source_renders_path):
+                # Get the relative path from source
+                rel_path = os.path.relpath(root, source_renders_path)
+                dest_dir = os.path.join(destination_renders_path, rel_path)
+                
+                # Create destination directory if it doesn't exist
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Copy each file if it doesn't exist or is newer
+                for file in files:
+                    source_file = os.path.join(root, file)
+                    dest_file = os.path.join(dest_dir, file)
+                    
+                    # Check if we need to copy
+                    should_copy = False
+                    if not os.path.exists(dest_file):
+                        should_copy = True
+                    else:
+                        source_mtime = os.path.getmtime(source_file)
+                        dest_mtime = os.path.getmtime(dest_file)
+                        if source_mtime > dest_mtime:
+                            should_copy = True
+                    
+                    if should_copy:
+                        shutil.copy2(source_file, dest_file)
+                        files_copied += 1
+                        logging.info(f"Copied render file: {dest_file}")
+                    else:
+                        files_skipped += 1
             
-            shutil.copytree(source_renders_path, destination_renders_path)
-            logging.info(f"Successfully copied renders folder to {destination_renders_path}")
+            logging.info(f"Renders folder sync complete: {files_copied} files copied, {files_skipped} unchanged files")
+            
         except Exception as e:
             logging.error(f"Error copying renders folder: {str(e)}")
 
@@ -551,9 +586,9 @@ class ImprovedGhostStaticGenerator:
         logging.info("Starting the static site generation process")
         self.update_repo()
         self.scrape_site()
-        self.convert_images()
+        self.copy_renders_folder()  # Now uses smart copy
+        self.convert_images()       # Will only convert images that haven't been converted already
         self.update_html_for_image_formats()
-        self.copy_renders_folder()  # New step to copy the renders folder
         self.update_urls_in_all_files()
         self.commit_and_push()
         logging.info("Static site generation process completed")
