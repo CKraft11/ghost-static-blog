@@ -565,7 +565,7 @@ class ImprovedGhostStaticGenerator:
                         content = f.read()
                     
                     content = content.replace(self.source_url, self.target_url)
-                    content = content.replace("10.0.0.222", "cadenkraft.com")
+                    content = content.replace("helium", "cadenkraft.com")
                     
                     with open(file_path, 'w', encoding='utf-8') as f:
                         f.write(content)
@@ -598,7 +598,7 @@ if __name__ == "__main__":
     parser.add_argument("--force-reconvert", action="store_true", help="Force reconversion of all images")
     args = parser.parse_args()
 
-    source_url = "http://10.0.0.222:2368"  # Change this to your local Ghost URL
+    source_url = "http://helium:2368"  # Change this to your local Ghost URL
     target_url = "https://cadenkraft.com"  # Change this to your target URL
     repo_path = "/home/ghost-static-site-gen"  # Change this to your local repo path
 
